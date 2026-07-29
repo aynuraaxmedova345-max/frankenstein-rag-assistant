@@ -1,0 +1,8 @@
+chromadb>=0.5
+gradio>=5
+matplotlib>=3.8
+numpy>=1.26
+openai>=1.50
+pandas>=2.2
+python-dotenv>=1.0
+sentence-transformers>=3.0

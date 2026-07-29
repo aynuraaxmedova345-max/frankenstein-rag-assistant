@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "Please cite this repository if you reuse the code or evaluation design."
+title: "Frankenstein RAG Assistant"
+type: software
+authors:
+  - family-names: "Akhmedova"
+    given-names: "Aynura"
+version: 1.0.0
+license: MIT

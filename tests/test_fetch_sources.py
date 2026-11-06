@@ -1,4 +1,5 @@
 from src.frankenstein_rag.fetch_sources import (
+    article_year, author_lifespan, parse_entry, ziyouz_links,
     author_years, slugify, strip_gutenberg_boilerplate, wrote_in_era,
 )
 
@@ -19,3 +20,23 @@ def test_strip_boilerplate():
 
 def test_slugify():
     assert slugify("The War of the Worlds!") == "the-war-of-the-worlds"
+
+def test_uzbek_article_year():
+    assert article_year("Abdulla Qodiriy. Biz kim va nimalardan qörqamiz? (1923)") == 1923
+    assert article_year("Zakot", "https://ziyouz.uz/matbuot/jadid-matbuoti/x-1914/") == 1914
+    assert article_year("Abdulla Avloniy. Zakot") is None
+
+def test_author_lifespan():
+    assert author_lifespan("Abdulla Qodiriy (1894-1938)") == (1894, 1938)
+    assert author_lifespan("Abdulla Rahimov (1953)") == (1953, None)
+
+def test_parse_entry():
+    html = '<div class="entry-content"><p>Salom <b>dunyo</b></p><div>ichki</div><p>Ikkinchi</p></div><p>tashqarida</p>'
+    text, pages = parse_entry(html)
+    assert "Salom dunyo" in text and "Ikkinchi" in text and "tashqarida" not in text
+
+def test_ziyouz_links_skips_continue_label():
+    html = ('<a href="https://ziyouz.uz/s/a/">Asar bir</a><a href="https://ziyouz.uz/s/a/">davomi&#8230;</a>'
+            '<a href="https://ziyouz.uz/s/b/"> </a><a href="https://ziyouz.uz/s/b/">Asar ikki</a>')
+    assert ziyouz_links(html, "https://ziyouz.uz/s/") == {
+        "https://ziyouz.uz/s/a/": "Asar bir", "https://ziyouz.uz/s/b/": "Asar ikki"}

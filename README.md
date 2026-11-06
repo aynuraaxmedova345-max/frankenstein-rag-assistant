@@ -86,6 +86,23 @@ python -m src.frankenstein_rag.fetch_sources newspapers --query "influenza" --ma
 python -m src.frankenstein_rag.fetch_sources all
 ```
 
+### O'zbekcha manbalar (1900-1930)
+
+```bash
+python -m src.frankenstein_rag.fetch_sources uzbek-press --max-items 50
+python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholpon,fitrat
+```
+
+- **Jadid matbuoti** (`uzbek-press`): ziyouz.uz'dagi gazeta/jurnal maqolalari
+  (Qodiriy, Fitrat, Hamza, Avloniy ...). Faqat sarlavhasida 1900-1930 yili
+  ko'rsatilganlar olinadi; yilsizlari uchun `--include-undated`.
+- **Nasr** (`uzbek-prose`): hikoya va romanlar; yil yo'q, shuning uchun muallifning
+  yashagan yillari bo'yicha tanlanadi. Sayt ko'pincha faqat parcha beradi
+  (manifestda `excerpt_only: true`).
+- Matn `?lng=lat` varianti: 1920-yillar lotin imlosiga yaqin transliteratsiya
+  (ö, ş, ç, ğ). Arab yozuvidagi asl skanerlar bu saytda yo'q.
+- Saqlash joyi: `data/raw/uzbek/press/`, `data/raw/uzbek/prose/`.
+
 - **Novels / stories**: Project Gutenberg. The catalogue has no original
   publication date, so books are selected by author lifespan overlapping
   1900-1930; a few titles may predate 1900 (e.g. *The Time Machine*, 1895).

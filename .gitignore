@@ -4,3 +4,4 @@ data/raw/manifest.jsonl
 __pycache__/
 .venv/
 .env
+data/raw/uzbek/

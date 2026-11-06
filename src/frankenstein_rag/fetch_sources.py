@@ -8,6 +8,8 @@ Two sources, both free and legal to download:
 Usage:
     python -m src.frankenstein_rag.fetch_sources gutenberg --max-books 20
     python -m src.frankenstein_rag.fetch_sources newspapers --query "influenza" --max-pages 30
+    python -m src.frankenstein_rag.fetch_sources uzbek-press --max-items 50
+    python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholpon,fitrat
     python -m src.frankenstein_rag.fetch_sources all
 
 Every downloaded file is listed in data/raw/manifest.jsonl with its source URL,
@@ -23,6 +25,7 @@ import pathlib
 import re
 import sys
 import time
+from html.parser import HTMLParser
 from typing import Iterator
 from urllib.parse import unquote
 
@@ -238,6 +241,176 @@ def fetch_newspapers(
 
 
 # --------------------------------------------------------------------------
+# Uzbek-language sources - ziyouz.uz
+# --------------------------------------------------------------------------
+# ziyouz.uz publishes 1900-1930s Uzbek texts (Jadid press, prose) transliterated
+# into Latin. The `?lng=lat` version keeps the 1920s-style orthography
+# (o, s, c, g with diacritics), the closest online form of the original script.
+# The original Arabic-script scans are NOT available there.
+ZIYOUZ = "https://ziyouz.uz"
+PRESS_SECTION = "matbuot/jadid-matbuoti"
+PROSE_SECTION = "ozbek-nasri"
+_TITLE_YEAR = re.compile(r"\((\d{4})\)")
+_PAREN_YEARS = re.compile(r"\((\d{4})(?:\s*-\s*(\d{4}))?\)")
+
+
+class _EntryText(HTMLParser):
+    """Collect text of <div class="entry-content">, paragraph by paragraph."""
+
+    BLOCKS = {"p", "br", "div", "h1", "h2", "h3", "h4", "li", "blockquote"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.depth = 0
+        self.parts: list[str] = []
+        self.pages: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if self.depth:
+            if tag == "div":
+                self.depth += 1
+            if tag in self.BLOCKS:
+                self.parts.append("\n")
+            if tag == "a" and "post-page-numbers" in (attrs.get("class") or ""):
+                self.pages.append(attrs.get("href", ""))
+        elif tag == "div" and "entry-content" in (attrs.get("class") or "").split():
+            self.depth = 1
+
+    def handle_endtag(self, tag):
+        if self.depth and tag == "div":
+            self.depth -= 1
+        if self.depth and tag in self.BLOCKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self.depth:
+            self.parts.append(data)
+
+
+def parse_entry(html: str) -> tuple[str, list[str]]:
+    parser = _EntryText()
+    parser.feed(html)
+    text = "".join(parser.parts).replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s*\n\s*", "\n", text)
+    return text.strip(), parser.pages
+
+
+def article_year(title: str, url: str = "") -> int | None:
+    match = _TITLE_YEAR.search(title) or re.search(r"-(19\d{2})/?$", url)
+    return int(match.group(1)) if match else None
+
+
+def author_lifespan(label: str) -> tuple[int | None, int | None]:
+    """'Abdulla Qodiriy (1894-1938)' -> (1894, 1938); '(1953)' -> (1953, None)."""
+    match = _PAREN_YEARS.search(label)
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2)) if match.group(2) else None
+
+
+def ziyouz_links(html: str, prefix: str) -> dict[str, str]:
+    """{url: title} for article links under `prefix`, first non-empty label wins."""
+    found: dict[str, str] = {}
+    for url, label in re.findall(rf'href="({re.escape(prefix)}[^"?#]+/)"[^>]*>\s*([^<]*)', html):
+        label = re.sub(r"\s+", " ", label).strip()
+        if label and not label.startswith("davomi") and not found.get(url):
+            found[url] = label
+    return found
+
+
+def _save_ziyouz(url: str, title: str, year: int | None, kind: str, era_basis: str,
+                 out_dir: pathlib.Path, raw_dir: pathlib.Path, delay: float) -> bool:
+    path = out_dir / f"{slugify(url.rstrip('/').rsplit('/', 1)[-1], 90)}.txt"
+    if path.exists():
+        return False
+    text, extra_pages = parse_entry(get(url, params={"lng": "lat"}, delay=delay).text)
+    for page_url in dict.fromkeys(extra_pages):  # multi-page works (long novels)
+        more, _ = parse_entry(get(page_url, params={"lng": "lat"}, delay=delay).text)
+        text += "\n\n" + more
+    # Prose pages show only an excerpt and point to a separate full download.
+    marker = re.search(r"\n?Asarning t\S*liq variantini saqlab oling.*$", text, re.S | re.I)
+    excerpt = bool(marker)
+    if marker:
+        text = text[:marker.start()].strip()
+    if len(text) < 300:
+        return False
+    path.write_text(text, encoding="utf-8")
+    append_manifest({
+        "source": "ziyouz.uz", "kind": kind, "language": "uz", "title": title, "year": year,
+        "file": str(path.relative_to(raw_dir)), "url": url, "era_basis": era_basis,
+        "script": "1920s-style Latin transliteration (?lng=lat)",
+        "excerpt_only": excerpt,
+    }, raw_dir)
+    return True
+
+
+def fetch_uzbek_press(*, max_items: int = 50, include_undated: bool = False,
+                      start_year: int = START_YEAR, end_year: int = END_YEAR,
+                      delay: float = 2.0, raw_dir: pathlib.Path = RAW_DIR) -> int:
+    """Jadid press: articles whose title carries a year in the era."""
+    out_dir = raw_dir / "uzbek" / "press"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    index = get(f"{ZIYOUZ}/{PRESS_SECTION}/", params={"lng": "lat"}, delay=0).text
+    saved = 0
+    for url, title in ziyouz_links(index, f"{ZIYOUZ}/{PRESS_SECTION}/").items():
+        if saved >= max_items:
+            break
+        year = article_year(title, url)
+        if year is None and not include_undated:
+            continue
+        if year is not None and not start_year <= year <= end_year:
+            continue
+        basis = f"year {year} in title" if year else "undated; author active in era"
+        try:
+            ok = _save_ziyouz(url, title, year, "press", basis, out_dir, raw_dir, delay)
+        except requests.RequestException as error:
+            print(f"  skip {title}: {error}")
+            continue
+        if ok:
+            saved += 1
+            print(f"  [{saved}/{max_items}] {title}")
+    return saved
+
+
+def fetch_uzbek_prose(*, authors: list[str] | None = None, max_items: int = 30,
+                      delay: float = 2.0, raw_dir: pathlib.Path = RAW_DIR) -> int:
+    """Stories/novels by authors who wrote during 1900-1930.
+
+    Work pages carry no year, so the era is judged by the author's lifespan;
+    pass --authors qodiriy,cholpon,fitrat to pick specific writers.
+    """
+    out_dir = raw_dir / "uzbek" / "prose"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prefix = f"{ZIYOUZ}/{PROSE_SECTION}/"
+    index = get(prefix, params={"lng": "lat"}, delay=0).text
+    wanted = [a.lower() for a in authors or []]
+    saved = 0
+    for author_url, label in ziyouz_links(index, prefix).items():
+        born, died = author_lifespan(label)
+        if born is None or died is None or not (born >= START_YEAR - 60 and born <= END_YEAR - 18 and died >= START_YEAR):
+            continue
+        if wanted and not any(w in author_url.lower() for w in wanted):
+            continue
+        author_page = get(author_url, params={"lng": "lat"}, delay=delay).text
+        for work_url, title in ziyouz_links(author_page, author_url).items():
+            if saved >= max_items:
+                return saved
+            try:
+                ok = _save_ziyouz(work_url, title, None, "prose",
+                                  f"author lifespan {born}-{died} overlaps 1900-1930",
+                                  out_dir, raw_dir, delay)
+            except requests.RequestException as error:
+                print(f"  skip {title}: {error}")
+                continue
+            if ok:
+                saved += 1
+                print(f"  [{saved}/{max_items}] {title}")
+    return saved
+
+
+# --------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -253,12 +426,24 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("--start-year", type=int, default=START_YEAR)
     n.add_argument("--end-year", type=int, default=END_YEAR)
 
+    up = sub.add_parser("uzbek-press", help="Uzbek Jadid press 1900-1930 (ziyouz.uz)")
+    up.add_argument("--max-items", type=int, default=50)
+    up.add_argument("--include-undated", action="store_true", help="also take articles with no year in the title")
+
+    upr = sub.add_parser("uzbek-prose", help="Uzbek stories/novels by 1900-1930 authors (ziyouz.uz)")
+    upr.add_argument("--authors", default="", help="comma list matched against URL, e.g. qodiriy,cholpon,fitrat")
+    upr.add_argument("--max-items", type=int, default=30)
+
     a = sub.add_parser("all", help="small sample of both sources")
     a.add_argument("--query", default="")
 
     args = parser.parse_args(argv)
     if args.command == "gutenberg":
         count = fetch_gutenberg(max_books=args.max_books, bookshelf=args.bookshelf, subject=args.subject)
+    elif args.command == "uzbek-press":
+        count = fetch_uzbek_press(max_items=args.max_items, include_undated=args.include_undated)
+    elif args.command == "uzbek-prose":
+        count = fetch_uzbek_prose(authors=[a for a in args.authors.split(",") if a], max_items=args.max_items)
     elif args.command == "newspapers":
         count = fetch_newspapers(query=args.query, max_pages=args.max_pages,
                                  start_year=args.start_year, end_year=args.end_year)

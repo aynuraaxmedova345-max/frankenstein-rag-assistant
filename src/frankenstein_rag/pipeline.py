@@ -39,6 +39,17 @@ class FrankensteinRAG:
         )
         return len(chunks)
 
+    def index_directory(self, directory: str, pattern: str = "**/*.txt") -> int:
+        """Index every .txt file under `directory` (e.g. data/raw/newspapers)."""
+        import pathlib
+        total = 0
+        for path in sorted(pathlib.Path(directory).glob(pattern)):
+            try:
+                total += self.index_document(str(path))
+            except ValueError:
+                continue  # too short to index
+        return total
+
     def retrieve(self, question: str, top_k: int | None = None) -> list[dict]:
         query_embedding = self._embed([question])[0]
         result = self.collection.query(

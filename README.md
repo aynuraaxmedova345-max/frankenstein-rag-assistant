@@ -76,3 +76,23 @@ Never commit `.env`, API keys, tokens, or private documents.
 ## Author
 
 **Aynura Akhmedova** — Computational Linguistics · NLP · Python
+
+## Fetching 1900-1930 sources automatically
+
+```bash
+pip install -r requirements.txt
+python -m src.frankenstein_rag.fetch_sources gutenberg --max-books 20 --bookshelf "Short Stories"
+python -m src.frankenstein_rag.fetch_sources newspapers --query "influenza" --max-pages 30
+python -m src.frankenstein_rag.fetch_sources all
+```
+
+- **Novels / stories**: Project Gutenberg. The catalogue has no original
+  publication date, so books are selected by author lifespan overlapping
+  1900-1930; a few titles may predate 1900 (e.g. *The Time Machine*, 1895).
+- **Newspapers**: Library of Congress *Chronicling America* OCR text, restricted
+  to pages dated 1900-1930 (exact dates are in the manifest).
+- Files land in `data/raw/gutenberg/` and `data/raw/newspapers/`;
+  `data/raw/manifest.jsonl` records the source URL of each file.
+  Downloaded texts are git-ignored. Index them with
+  `FrankensteinRAG().index_directory("data/raw/newspapers")`.
+- Requests are rate-limited; keep `--max-*` modest to be polite to both sites.

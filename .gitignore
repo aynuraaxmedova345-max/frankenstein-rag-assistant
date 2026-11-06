@@ -1,0 +1,6 @@
+data/raw/gutenberg/
+data/raw/newspapers/
+data/raw/manifest.jsonl
+__pycache__/
+.venv/
+.env

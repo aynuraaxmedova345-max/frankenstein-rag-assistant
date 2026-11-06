@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 .env
 data/raw/uzbek/
+data/raw/uzbek/.checked

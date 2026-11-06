@@ -9,6 +9,7 @@ Usage:
     python -m src.frankenstein_rag.fetch_sources gutenberg --max-books 20
     python -m src.frankenstein_rag.fetch_sources newspapers --query "influenza" --max-pages 30
     python -m src.frankenstein_rag.fetch_sources uzbek-press --max-items 50
+    python -m src.frankenstein_rag.fetch_sources uzbek-newspapers
     python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholpon,fitrat
     python -m src.frankenstein_rag.fetch_sources all
 
@@ -448,6 +449,111 @@ def fetch_uzbek_prose(*, authors: list[str] | None = None, max_items: int = 30,
     return saved
 
 
+# --- newspaper articles inside the Jadid press section ------------------
+_FOLD = str.maketrans({"ş": "s", "ç": "c", "ğ": "g", "ö": "o", "ü": "u", "ı": "i", "ʼ": "'", "’": "'"})
+_NAME_ALIASES = {"muitum": "mustum", "sadoyi turkiston": "sadoi turkiston"}
+# Periodicals that are journals, not newspapers (their lines may not say "jurnali").
+_KNOWN_JOURNALS = {"inqilob", "kengas", "oyna", "maorif va oqutguvci", "ozgarisci yosar"}
+_QUOTED = r"[«“\"]\s*([^»”\"\n]{3,40}?)\s*[»”\"]"
+_SOURCE_PATTERNS = [
+    # «Muştum» — 1923 yil, 7-son   |  “Muştum”— 1923 yil, 7-son
+    re.compile(rf"^{_QUOTED}\s*[—–\-:]*\s*(\d{{4}})\s*yil(?=\s*[,.\d])[^\n]*?(?:-son|\d{{1,2}}\s+\w+)"),
+    # «Sadoi Farğona» gazetasi, 1914 yil, 24 sentyabr
+    re.compile(rf"^{_QUOTED}\s*(gazetasi|jurnali)\s*,?\s*(\d{{4}})"),
+    # «Uluğ Turkiston», 1918, 11 yanvar
+    re.compile(rf"^{_QUOTED}\s*,\s*(\d{{4}})\s*,\s*\d{{1,2}}\s+\w+"),
+]
+_ISSUE_LINE = re.compile(r"^(\d{4})\s*yil[^\n]*-son")
+
+
+def fold_name(name: str) -> str:
+    folded = re.sub(r"\s+", " ", name.lower().translate(_FOLD)).strip(" .,:;-")
+    return _NAME_ALIASES.get(folded, folded)
+
+
+def detect_newspaper(text: str) -> dict | None:
+    """Find the source line of an article reprinted from a periodical.
+
+    Returns {name, key, year, line, is_journal} or None.
+    Footnote lines ("[3] ...") and body text are ignored.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
+        if re.match(r"^\[\d+\]", line) or len(line) > 100:
+            continue
+        for pattern in _SOURCE_PATTERNS:
+            match = pattern.match(line)
+            if not match:
+                continue
+            groups = match.groups()
+            name = groups[0].strip()
+            kind = next((g for g in groups[1:] if g in ("gazetasi", "jurnali")), None)
+            year = int(next(g for g in groups[1:] if g and g.isdigit()))
+            key = fold_name(name)
+            is_journal = kind == "jurnali" or key in _KNOWN_JOURNALS or bool(re.search(r"\bjurnal", line, re.I))
+            return {"name": name, "key": key, "year": year, "line": line, "is_journal": is_journal}
+        # two-line form:  «Muştum» idorasi.  /  1925 yil, 4 oktabr, 17-son
+        issue = _ISSUE_LINE.match(line)
+        if issue and index > 0:
+            previous = re.search(_QUOTED, lines[index - 1])
+            if previous:
+                name = previous.group(1).strip()
+                key = fold_name(name)
+                is_journal = key in _KNOWN_JOURNALS or bool(re.search(r"\bjurnal", lines[index - 1], re.I))
+                return {"name": name, "key": key, "year": int(issue.group(1)),
+                        "line": f"{lines[index - 1]} / {line}", "is_journal": is_journal}
+    return None
+
+
+def fetch_uzbek_newspapers(*, max_items: int = 400, start_year: int = START_YEAR,
+                           end_year: int = END_YEAR, delay: float = 2.0,
+                           raw_dir: pathlib.Path = RAW_DIR) -> int:
+    """Scan the whole Jadid-press section; keep articles reprinted from newspapers.
+
+    Saved under data/raw/uzbek/newspapers/<newspaper>/ . URLs already inspected
+    (kept or rejected) are remembered in data/raw/uzbek/.checked so reruns resume.
+    """
+    base = raw_dir / "uzbek"
+    base.mkdir(parents=True, exist_ok=True)
+    checked_file = base / ".checked"
+    checked = set(checked_file.read_text().split()) if checked_file.exists() else set()
+    index = get(f"{ZIYOUZ}/{PRESS_SECTION}/", params={"lng": "lat"}, delay=0).text
+    saved = 0
+    for url, title in ziyouz_links(index, f"{ZIYOUZ}/{PRESS_SECTION}/").items():
+        if saved >= max_items:
+            break
+        if url in checked:
+            continue
+        try:
+            html = get(url, params={"lng": "lat"}, delay=delay).text
+            text, extra = parse_entry(html)
+            for page_url in dict.fromkeys(extra):
+                text += "\n\n" + parse_entry(get(page_url, params={"lng": "lat"}, delay=delay).text)[0]
+        except requests.RequestException as error:
+            print(f"  skip {title}: {error}")
+            continue
+        with checked_file.open("a") as handle:
+            handle.write(url + "\n")
+        source = detect_newspaper(text)
+        if not source or source["is_journal"] or not start_year <= source["year"] <= end_year:
+            continue
+        out_dir = base / "newspapers" / slugify(source["key"], 40)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{slugify(url.rstrip('/').rsplit('/', 1)[-1], 90)}.txt"
+        path.write_text(text, encoding="utf-8")
+        append_manifest({
+            "source": "ziyouz.uz", "kind": "newspaper-article", "language": "uz", "title": title,
+            "newspaper": source["name"], "year": source["year"], "issue_line": source["line"],
+            "file": str(path.relative_to(raw_dir)), "url": url,
+            "era_basis": f"printed in {source['name']}, {source['year']}",
+            "script": "1920s-style Latin transliteration (?lng=lat)",
+        }, raw_dir)
+        saved += 1
+        print(f"  [{saved}] {source['name']} {source['year']} - {title}")
+    return saved
+
+
 # --------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -468,6 +574,9 @@ def main(argv: list[str] | None = None) -> int:
     up.add_argument("--max-items", type=int, default=50)
     up.add_argument("--include-undated", action="store_true", help="also take articles with no year in the title")
 
+    un = sub.add_parser("uzbek-newspapers", help="Uzbek newspaper articles 1900-1930 (Mushtum, Turkiston, ...)")
+    un.add_argument("--max-items", type=int, default=400)
+
     upr = sub.add_parser("uzbek-prose", help="Uzbek stories/novels by 1900-1930 authors (ziyouz.uz)")
     upr.add_argument("--authors", default="", help="comma list matched against URL, e.g. qodiriy,cholpon,fitrat")
     upr.add_argument("--max-items", type=int, default=30)
@@ -481,6 +590,8 @@ def main(argv: list[str] | None = None) -> int:
         count = fetch_gutenberg(max_books=args.max_books, bookshelf=args.bookshelf, subject=args.subject)
     elif args.command == "uzbek-press":
         count = fetch_uzbek_press(max_items=args.max_items, include_undated=args.include_undated)
+    elif args.command == "uzbek-newspapers":
+        count = fetch_uzbek_newspapers(max_items=args.max_items)
     elif args.command == "uzbek-prose":
         count = fetch_uzbek_prose(authors=[a for a in args.authors.split(",") if a],
                                   max_items=args.max_items, full=not args.excerpts_only)

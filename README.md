@@ -89,10 +89,17 @@ python -m src.frankenstein_rag.fetch_sources all
 ### O'zbekcha manbalar (1900-1930)
 
 ```bash
+python -m src.frankenstein_rag.fetch_sources uzbek-newspapers
 python -m src.frankenstein_rag.fetch_sources uzbek-press --max-items 50
 python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholpon,fitrat
 ```
 
+- **Gazeta maqolalari** (`uzbek-newspapers`): jadid matbuoti bo'limidagi barcha
+  maqolalar tekshiriladi, oxiridagi manba satri (masalan «Muştum» — 1923 yil, 7-son)
+  bo'yicha gazetadan olinganlari `data/raw/uzbek/newspapers/<gazeta>/` ga saqlanadi
+  (Muştum, Turkiston, Iştirokiyun, Qizil bayroq, Hurriyat, Sadoi Farğona va b.).
+  Jurnallar (Inqilob, Oyna, Kengaş...) olinmaydi. Gazeta nomi va soni manifestda
+  (`newspaper`, `issue_line`). To'liq sonlar emas, alohida maqolalar.
 - **Jadid matbuoti** (`uzbek-press`): ziyouz.uz'dagi gazeta/jurnal maqolalari
   (Qodiriy, Fitrat, Hamza, Avloniy ...). Faqat sarlavhasida 1900-1930 yili
   ko'rsatilganlar olinadi; yilsizlari uchun `--include-undated`.

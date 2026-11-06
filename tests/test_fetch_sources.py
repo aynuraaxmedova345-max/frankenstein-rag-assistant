@@ -1,5 +1,5 @@
 from src.frankenstein_rag.fetch_sources import (
-    article_year, author_lifespan, download_full_text, parse_entry, ziyouz_links,
+    article_year, author_lifespan, detect_newspaper, download_full_text, parse_entry, ziyouz_links,
     author_years, slugify, strip_gutenberg_boilerplate, wrote_in_era,
 )
 
@@ -43,3 +43,32 @@ def test_ziyouz_links_skips_continue_label():
 
 def test_download_link_absent_returns_none():
     assert download_full_text('<a href="https://ziyouz.uz/x/">x</a>', delay=0) is None
+
+def _src(last):
+    return "Matn matn matn.\n" + last + "\n[1] Izoh — 1920 yil."
+
+def test_detect_newspaper_dash_form():
+    r = detect_newspaper(_src("«Muştum» — 1923 yil, 1may, 7-son, 6-bet"))
+    assert (r["key"], r["year"], r["is_journal"]) == ("mustum", 1923, False)
+
+def test_detect_newspaper_ocr_variant_maps_to_same_key():
+    assert detect_newspaper(_src("«Muitum» — 1923 yil, 2-son, 1 mart"))["key"] == "mustum"
+
+def test_detect_newspaper_gazetasi_and_journal():
+    g = detect_newspaper(_src("«Sadoi Farğona» gazetasi, 1914 yil, 24 sentyabr"))
+    assert g["year"] == 1914 and not g["is_journal"]
+    j = detect_newspaper(_src("«Kengaş» jurnali, 1917 yil, 1-son"))
+    assert j["is_journal"]
+
+def test_detect_newspaper_two_line_and_none():
+    r = detect_newspaper(_src("Örtoqlariğa hurmat bilan «Muştum» idorasi.\n1925 yil, 4 oktabr, 17-son, 14-15-betlar."))
+    assert r["year"] == 1925 and r["key"] == "mustum"
+    assert detect_newspaper("Oddiy matn.\n[1] Izoh «Turon» jamiyati — 1920 yil") is None
+
+def test_description_footnote_is_not_a_source():
+    text = "Matn.\n«Oyna» – 1913 yil avgustidan 1915 yil iyuniga qadar Samarqandda nashr etilgan jurnal."
+    assert detect_newspaper(text) is None
+
+def test_known_journal_and_two_line_journal():
+    assert detect_newspaper(_src("«Inqilob» — 1922 yil, 7-8-son"))["is_journal"]
+    assert detect_newspaper(_src("«Maorif va öqutğuvçi» jurnali,\n1926 yil, 11—12-son"))["is_journal"]

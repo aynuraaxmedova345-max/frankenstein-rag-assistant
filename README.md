@@ -97,8 +97,11 @@ python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholp
   (Qodiriy, Fitrat, Hamza, Avloniy ...). Faqat sarlavhasida 1900-1930 yili
   ko'rsatilganlar olinadi; yilsizlari uchun `--include-undated`.
 - **Nasr** (`uzbek-prose`): hikoya va romanlar; yil yo'q, shuning uchun muallifning
-  yashagan yillari bo'yicha tanlanadi. Sayt ko'pincha faqat parcha beradi
-  (manifestda `excerpt_only: true`).
+  yashagan yillari bo'yicha tanlanadi. Sayt romanlarning faqat parchasini beradi,
+  shuning uchun to'liq PDF (n.ziyouz.com) yuklanib, matni `pdftotext` bilan
+  ajratiladi (`apt install poppler-utils` kerak). Bunday fayllar kirill yozuvida
+  bo'ladi; PDF topilmasa parcha saqlanadi va manifestda `excerpt_only: true` turadi.
+  Faqat parcha kerak bo'lsa: `--excerpts-only`.
 - Matn `?lng=lat` varianti: 1920-yillar lotin imlosiga yaqin transliteratsiya
   (ö, ş, ç, ğ). Arab yozuvidagi asl skanerlar bu saytda yo'q.
 - Saqlash joyi: `data/raw/uzbek/press/`, `data/raw/uzbek/prose/`.

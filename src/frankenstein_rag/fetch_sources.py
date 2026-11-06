@@ -23,6 +23,7 @@ import io
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import time
 from html.parser import HTMLParser
@@ -320,12 +321,38 @@ def ziyouz_links(html: str, prefix: str) -> dict[str, str]:
     return found
 
 
+_DOWNLOAD_LINK = re.compile(r'href="(https?://n\.ziyouz\.com/kutubxona/[^"]*\?download=[^"]+)"')
+
+
+def pdf_to_text(pdf_bytes: bytes) -> str:
+    """Extract text with poppler's `pdftotext` (apt install poppler-utils)."""
+    result = subprocess.run(["pdftotext", "-", "-"], input=pdf_bytes, capture_output=True, timeout=300)
+    if result.returncode != 0:
+        raise RuntimeError(f"pdftotext failed: {result.stderr.decode(errors='replace')[:200]}")
+    text = result.stdout.decode("utf-8", "replace").replace("\x0c", "\n")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def download_full_text(page_html: str, delay: float) -> tuple[str, str] | None:
+    """Full work from the library PDF linked on a ziyouz.uz page: (text, pdf_url)."""
+    link = _DOWNLOAD_LINK.search(page_html)
+    if not link:
+        return None
+    pdf_url = link.group(1).replace("http://", "https://", 1).replace("&amp;", "&")
+    response = get(pdf_url, delay=delay)
+    if not response.content.startswith(b"%PDF"):
+        return None
+    return pdf_to_text(response.content), pdf_url
+
+
 def _save_ziyouz(url: str, title: str, year: int | None, kind: str, era_basis: str,
-                 out_dir: pathlib.Path, raw_dir: pathlib.Path, delay: float) -> bool:
+                 out_dir: pathlib.Path, raw_dir: pathlib.Path, delay: float,
+                 full: bool = True) -> bool:
     path = out_dir / f"{slugify(url.rstrip('/').rsplit('/', 1)[-1], 90)}.txt"
     if path.exists():
         return False
-    text, extra_pages = parse_entry(get(url, params={"lng": "lat"}, delay=delay).text)
+    page_html = get(url, params={"lng": "lat"}, delay=delay).text
+    text, extra_pages = parse_entry(page_html)
     for page_url in dict.fromkeys(extra_pages):  # multi-page works (long novels)
         more, _ = parse_entry(get(page_url, params={"lng": "lat"}, delay=delay).text)
         text += "\n\n" + more
@@ -334,14 +361,25 @@ def _save_ziyouz(url: str, title: str, year: int | None, kind: str, era_basis: s
     excerpt = bool(marker)
     if marker:
         text = text[:marker.start()].strip()
+    script = "1920s-style Latin transliteration (?lng=lat)"
+    pdf_url = None
+    if excerpt and full:
+        try:
+            downloaded = download_full_text(page_html, delay)
+        except (requests.RequestException, RuntimeError, subprocess.SubprocessError, OSError) as error:
+            print(f"    full text unavailable ({error}); keeping excerpt")
+            downloaded = None
+        if downloaded and len(downloaded[0]) > len(text):
+            text, pdf_url = downloaded
+            excerpt = False
+            script = "Cyrillic (library PDF text layer)"
     if len(text) < 300:
         return False
     path.write_text(text, encoding="utf-8")
     append_manifest({
         "source": "ziyouz.uz", "kind": kind, "language": "uz", "title": title, "year": year,
-        "file": str(path.relative_to(raw_dir)), "url": url, "era_basis": era_basis,
-        "script": "1920s-style Latin transliteration (?lng=lat)",
-        "excerpt_only": excerpt,
+        "file": str(path.relative_to(raw_dir)), "url": url, "pdf_url": pdf_url, "era_basis": era_basis,
+        "script": script, "excerpt_only": excerpt,
     }, raw_dir)
     return True
 
@@ -375,7 +413,7 @@ def fetch_uzbek_press(*, max_items: int = 50, include_undated: bool = False,
 
 
 def fetch_uzbek_prose(*, authors: list[str] | None = None, max_items: int = 30,
-                      delay: float = 2.0, raw_dir: pathlib.Path = RAW_DIR) -> int:
+                      full: bool = True, delay: float = 2.0, raw_dir: pathlib.Path = RAW_DIR) -> int:
     """Stories/novels by authors who wrote during 1900-1930.
 
     Work pages carry no year, so the era is judged by the author's lifespan;
@@ -400,7 +438,7 @@ def fetch_uzbek_prose(*, authors: list[str] | None = None, max_items: int = 30,
             try:
                 ok = _save_ziyouz(work_url, title, None, "prose",
                                   f"author lifespan {born}-{died} overlaps 1900-1930",
-                                  out_dir, raw_dir, delay)
+                                  out_dir, raw_dir, delay, full=full)
             except requests.RequestException as error:
                 print(f"  skip {title}: {error}")
                 continue
@@ -433,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     upr = sub.add_parser("uzbek-prose", help="Uzbek stories/novels by 1900-1930 authors (ziyouz.uz)")
     upr.add_argument("--authors", default="", help="comma list matched against URL, e.g. qodiriy,cholpon,fitrat")
     upr.add_argument("--max-items", type=int, default=30)
+    upr.add_argument("--excerpts-only", action="store_true", help="skip the full-text PDF download")
 
     a = sub.add_parser("all", help="small sample of both sources")
     a.add_argument("--query", default="")
@@ -443,7 +482,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "uzbek-press":
         count = fetch_uzbek_press(max_items=args.max_items, include_undated=args.include_undated)
     elif args.command == "uzbek-prose":
-        count = fetch_uzbek_prose(authors=[a for a in args.authors.split(",") if a], max_items=args.max_items)
+        count = fetch_uzbek_prose(authors=[a for a in args.authors.split(",") if a],
+                                  max_items=args.max_items, full=not args.excerpts_only)
     elif args.command == "newspapers":
         count = fetch_newspapers(query=args.query, max_pages=args.max_pages,
                                  start_year=args.start_year, end_year=args.end_year)

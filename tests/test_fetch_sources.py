@@ -1,5 +1,5 @@
 from src.frankenstein_rag.fetch_sources import (
-    article_year, author_lifespan, parse_entry, ziyouz_links,
+    article_year, author_lifespan, download_full_text, parse_entry, ziyouz_links,
     author_years, slugify, strip_gutenberg_boilerplate, wrote_in_era,
 )
 
@@ -40,3 +40,6 @@ def test_ziyouz_links_skips_continue_label():
             '<a href="https://ziyouz.uz/s/b/"> </a><a href="https://ziyouz.uz/s/b/">Asar ikki</a>')
     assert ziyouz_links(html, "https://ziyouz.uz/s/") == {
         "https://ziyouz.uz/s/a/": "Asar bir", "https://ziyouz.uz/s/b/": "Asar ikki"}
+
+def test_download_link_absent_returns_none():
+    assert download_full_text('<a href="https://ziyouz.uz/x/">x</a>', delay=0) is None

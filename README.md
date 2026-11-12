@@ -123,3 +123,17 @@ python -m src.frankenstein_rag.fetch_sources uzbek-prose --authors qodiriy,cholp
   Downloaded texts are git-ignored. Index them with
   `FrankensteinRAG().index_directory("data/raw/newspapers")`.
 - Requests are rate-limited; keep `--max-*` modest to be polite to both sites.
+
+### Arab yozuvidagi variant (qayta tiklangan, ASL NUSXA EMAS)
+
+```bash
+python -m src.frankenstein_rag.translit_arabic
+```
+
+1900-1930 yillardagi gazetalar asli arab yozuvida chiqqan, lekin ochiq skanerlar
+topilmadi. Shuning uchun `data/raw/uzbek/newspapers/` dagi lotin matnlar
+`data/raw/uzbek/newspapers_arabic/` ga arab yozuviga **dasturiy o'girildi**
+(sxema `arab-v1`, `src/frankenstein_rag/translit_arabic.py` docstring'ida jadval bor).
+Har fayl boshida "ASL NUSXA EMAS" izohi bor, `manifest_arabic.jsonl` da
+`authentic: false`. Bu tarixiy imlo emas: bir harf - bir tovush, unlilar to'liq yoziladi.
+`ng` doim ڭ, `j` doim ج deb o'giriladi.
